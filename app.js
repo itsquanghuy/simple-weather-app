@@ -1,85 +1,62 @@
-class Location {
-	constructor(timezone, weatherIcon) {
-		this._timezone = timezone;
-		this._weatherIcon = weatherIcon;
-	}
-
-	set timezone(t) {
-		this._timezone = t;
-	}
-
-	get timezone() {
-		return this._timezone;
-	}
-
-	set weatherIcon(i) {
-		this._weatherIcon = i;
-	}
-
-	get weatherIcon() {
-		return this._weatherIcon;
+class UI {
+	static render(func) {
+		func();
 	}
 }
 
-class Temperature {
-	constructor(amount, degree) {
-		this._amount = amount;
-		this._degree = degree;
+const data = {
+	timezone: '',
+	weatherIcon: '',
+	temperature: {
+		amount: 0,
+		degree: 'F',
+	},
+	summary: '',
+};
+
+let target = null;
+
+class Dep {
+	constructor() {
+		this._subscribers = [];
 	}
 
-	set amount(a) {
-		this._amount = a;
-	}
-
-	get amount() {
-		return this._amount;
-	}
-
-	set degree(d) {
-		if (d === this._degree) {
-			return;
-		} else if (d === 'C') {
-			this._degree = d;
-			this._amount = Math.round((this._amount - 32) * (5 / 9)).toFixed(2);
-		} else if (d === 'F') {
-			this._degree = d;
-			this._amount = Math.round(this._amount * (9 / 5) + 32).toFixed(2);
-		} else {
-			throw new Error(`Unsupported degree of ${d}`);
+	depend() {
+		if (target && !this._subscribers.includes(target)) {
+			this._subscribers.push(target);
 		}
 	}
 
-	get degree() {
-		return this._degree;
+	notify() {
+		this._subscribers.forEach((sub) => sub());
 	}
 }
 
-class UI {
-	static setWeatherIcon(icon, iconId) {
-		const skycons = new Skycons({ color: 'white' });
-		const currentIcon = icon.replace(/-/g, '_').toUpperCase();
-		skycons.play();
-		skycons.set(iconId, Skycons[currentIcon]);
-	}
+Object.keys(data).forEach((key) => {
+	let internalValue = data[key];
 
-	static setTemperature(a, d) {
-		document.querySelector('.amount').textContent = a;
-		document.querySelector('.degree').textContent = d;
-	}
+	const dep = new Dep();
 
-	static setSummary(s) {
-		document.querySelector('.summary').textContent = s;
-	}
+	Object.defineProperty(data, key, {
+		get() {
+			dep.depend();
+			return internalValue;
+		},
+		set(newVal) {
+			internalValue = newVal;
+			dep.notify();
+		},
+	});
+});
 
-	static setTimezone(t) {
-		document.querySelector('.timezone').textContent = t;
-	}
+function watcher(myFunc) {
+	target = myFunc;
+	target();
+	target = null;
 }
 
 window.addEventListener('load', () => {
 	if (navigator.geolocation) {
-		let location, temperature;
-
 		navigator.geolocation.getCurrentPosition((position) => {
 			const { longitude, latitude } = position.coords;
 
@@ -88,30 +65,64 @@ window.addEventListener('load', () => {
 
 			fetch(api)
 				.then((res) => res.json())
-				.then((data) => {
-					location = new Location(data.timezone, data.currently.icon);
-					temperature = new Temperature(data.currently.temperature, 'F');
+				.then((json) => {
+					const { timezone } = json;
+					const { temperature, summary, icon } = json.currently;
 
-					UI.setTimezone(location.timezone);
-					UI.setWeatherIcon(
-						location.weatherIcon,
-						document.getElementById('weather-icon')
-					);
-					UI.setTemperature(temperature.amount, temperature.degree);
-					UI.setSummary(data.currently.summary);
+					data.timezone = timezone;
+					data.temperature = { ...data.temperature, amount: temperature };
+					data.summary = summary;
+					data.weatherIcon = icon;
+
+					watcher(() => {
+						UI.render(() => {
+							document.querySelector('.timezone').textContent = data.timezone;
+						});
+					});
+					watcher(() => {
+						UI.render(() => {
+							const skycons = new Skycons({ color: 'white' });
+							const currentIcon = data.weatherIcon
+								.replace(/-/g, '_')
+								.toUpperCase();
+							skycons.play();
+							skycons.set(
+								document.querySelector('#weather-icon'),
+								Skycons[currentIcon]
+							);
+						});
+					});
+					watcher(() => {
+						UI.render(() => {
+							document.querySelector('.amount').textContent =
+								data.temperature.amount;
+							document.querySelector('.degree').textContent =
+								data.temperature.degree;
+						});
+					});
+					watcher(() => {
+						UI.render(() => {
+							document.querySelector('.summary').textContent = data.summary;
+						});
+					});
 				});
 		});
 
 		document.querySelector('.temperature').addEventListener('click', () => {
-			const { degree } = temperature;
-
-			if (degree === 'F') {
-				temperature.degree = 'C';
-			} else {
-				temperature.degree = 'F';
-			}
-
-			UI.setTemperature(temperature.amount, temperature.degree);
+			data.temperature =
+				data.temperature.degree === 'F'
+					? {
+							amount: Math.round(
+								(data.temperature.amount - 32) * (5 / 9)
+							).toFixed(2),
+							degree: 'C',
+					  }
+					: {
+							amount: Math.round(
+								data.temperature.amount * (9 / 5) + 32
+							).toFixed(2),
+							degree: 'F',
+					  };
 		});
 	}
 });
